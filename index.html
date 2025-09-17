@@ -61,7 +61,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getDoc, doc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Firebase Configuration and App ID
@@ -114,8 +114,8 @@
 
         // Listen for messages in real-time
         function listenForMessages() {
-            if (!db) {
-                console.error("Firestore is not initialized.");
+            if (!db || !auth.currentUser) {
+                console.error("Firestore is not initialized or user not authenticated.");
                 return;
             }
             const q = query(
@@ -125,7 +125,6 @@
 
             onSnapshot(q, async (snapshot) => {
                 messagesEl.innerHTML = ''; // Clear old messages
-                const messagesWithUsernames = [];
                 for (const doc of snapshot.docs) {
                     const data = doc.data();
                     let messageUsername = data.username || 'ผู้ใช้ไม่ระบุชื่อ';
@@ -183,18 +182,22 @@
             e.preventDefault();
             const username = usernameInput.value.trim();
             if (username) {
-                currentUsername = username;
-                showChat();
-                // Persist username to Firestore for other users to see
-                try {
-                    await setDoc(doc(db, `artifacts/${appId}/public/data/users/${auth.currentUser.uid}`), {
-                        username: username,
-                        last_active: serverTimestamp()
-                    });
-                } catch (error) {
-                    console.error("Error saving username:", error);
+                await authenticate(); // Authenticate the user on form submission
+                if (auth.currentUser) {
+                    currentUsername = username;
+                    showChat();
+                    try {
+                        await setDoc(doc(db, `artifacts/${appId}/public/data/users/${auth.currentUser.uid}`), {
+                            username: username,
+                            last_active: serverTimestamp()
+                        });
+                    } catch (error) {
+                        console.error("Error saving username:", error);
+                    }
+                    listenForMessages();
+                } else {
+                    console.error("Authentication failed during username submission.");
                 }
-                listenForMessages();
             }
         });
         
