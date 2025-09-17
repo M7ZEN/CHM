@@ -182,28 +182,43 @@
             e.preventDefault();
             const username = usernameInput.value.trim();
             if (username) {
-                // Store the username in a temporary variable
-                let tempUsername = username;
-                
-                // Show the chat container while waiting for authentication
-                showChat();
-
-                onAuthStateChanged(auth, async (user) => {
-                    if (user) {
-                        try {
-                            await setDoc(doc(db, `artifacts/${appId}/public/data/users/${user.uid}`), {
-                                username: tempUsername,
-                                last_active: serverTimestamp()
-                            });
-                            currentUsername = tempUsername;
-                            listenForMessages();
-                        } catch (error) {
-                            console.error("Error saving username:", error);
-                        }
-                    } else {
-                        console.error("Authentication failed after username submission.");
+                // Check if user is already authenticated
+                if (auth.currentUser) {
+                    try {
+                        await setDoc(doc(db, `artifacts/${appId}/public/data/users/${auth.currentUser.uid}`), {
+                            username: username,
+                            last_active: serverTimestamp()
+                        });
+                        currentUsername = username;
+                        showChat();
+                        listenForMessages();
+                    } catch (error) {
+                        console.error("Error saving username:", error);
                     }
-                });
+                } else {
+                    // Re-run authentication if user is not authenticated
+                    authenticate().then(() => {
+                        onAuthStateChanged(auth, async (user) => {
+                            if (user) {
+                                try {
+                                    await setDoc(doc(db, `artifacts/${appId}/public/data/users/${user.uid}`), {
+                                        username: username,
+                                        last_active: serverTimestamp()
+                                    });
+                                    currentUsername = username;
+                                    showChat();
+                                    listenForMessages();
+                                } catch (error) {
+                                    console.error("Error saving username:", error);
+                                }
+                            } else {
+                                console.error("Authentication failed after username submission.");
+                            }
+                        });
+                    }).catch(error => {
+                        console.error("Authentication failed:", error);
+                    });
+                }
             }
         });
         
