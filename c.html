@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>เว็บแชทออนไลน์</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f1f5f9;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+
+    <!-- Main Chat Container -->
+    <div id="main-container" class="bg-white rounded-xl shadow-2xl max-w-2xl w-full flex flex-col h-[80vh] hidden">
+        
+        <!-- Header -->
+        <div class="bg-purple-600 text-white p-4 rounded-t-xl shadow-lg">
+            <h1 class="text-xl font-bold">แชทสาธารณะ</h1>
+            <p id="app-info" class="text-sm mt-1 text-purple-200">
+                รหัสผู้ใช้: - | รหัสแอป: -
+            </p>
+        </div>
+
+        <!-- Message Display Area -->
+        <div id="messages" class="flex-1 overflow-y-auto p-4 space-y-4">
+            <!-- Messages will be injected here -->
+        </div>
+
+        <!-- Message Input Form -->
+        <form id="chat-form" class="p-4 border-t border-gray-200 flex space-x-2">
+            <input type="text" id="message-input" placeholder="พิมพ์ข้อความที่นี่..."
+                   class="flex-1 p-3 rounded-full bg-gray-100 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-colors duration-200">
+            <button type="submit"
+                    class="bg-purple-600 text-white font-semibold py-2 px-6 rounded-full shadow-lg hover:bg-purple-700 transition duration-300 transform hover:scale-105">
+                ส่ง
+            </button>
+        </form>
+    </div>
+
+    <!-- Username Input Modal -->
+    <div id="username-modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50">
+        <div class="bg-white p-8 rounded-xl shadow-2xl text-center">
+            <h2 class="text-2xl font-bold mb-4 text-gray-800">ใส่ชื่อของคุณ</h2>
+            <form id="username-form" class="flex flex-col space-y-4">
+                <input type="text" id="username-input" placeholder="ชื่อผู้ใช้" required
+                       class="p-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-colors duration-200">
+                <button type="submit"
+                        class="bg-purple-600 text-white font-semibold py-3 rounded-lg shadow-lg hover:bg-purple-700 transition duration-300 transform hover:scale-105">
+                    เข้าสู่แชท
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Firebase Configuration and App ID
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+
+        // UI Elements
+        const messagesEl = document.getElementById('messages');
+        const form = document.getElementById('chat-form');
+        const messageInput = document.getElementById('message-input');
+        const appInfoEl = document.getElementById('app-info');
+        const mainContainer = document.getElementById('main-container');
+        const usernameModal = document.getElementById('username-modal');
+        const usernameForm = document.getElementById('username-form');
+        const usernameInput = document.getElementById('username-input');
+
+        let currentUsername = null;
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+        
+        // Log authentication state for debugging
+        auth.onAuthStateChanged(user => {
+            if (user) {
+                appInfoEl.textContent = `รหัสผู้ใช้: ${user.uid} | รหัสแอป: ${appId}`;
+            } else {
+                appInfoEl.textContent = 'กำลังเข้าสู่ระบบ...';
+            }
+        });
+
+        // Sign in anonymously
+        async function authenticate() {
+            try {
+                if (typeof __initial_auth_token !== 'undefined') {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Authentication failed: ", error);
+            }
+        }
+
+        // Show chat when username is set
+        function showChat() {
+            usernameModal.classList.add('hidden');
+            mainContainer.classList.remove('hidden');
+        }
+
+        // Handle username form submission
+        usernameForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const username = usernameInput.value.trim();
+            if (username) {
+                localStorage.setItem('username', username);
+                currentUsername = username;
+                showChat();
+                listenForMessages(); // Start listening for messages after username is set
+            }
+        });
+
+        // Listen for messages in real-time
+        function listenForMessages() {
+            const q = query(
+                collection(db, `artifacts/${appId}/public/data/chat_messages`),
+                orderBy('timestamp')
+            );
+
+            onSnapshot(q, (snapshot) => {
+                messagesEl.innerHTML = ''; // Clear old messages
+                snapshot.forEach((doc) => {
+                    const data = doc.data();
+                    const messageElement = document.createElement('div');
+                    const isCurrentUser = data.userId === auth.currentUser.uid;
+                    
+                    messageElement.classList.add('flex', 'flex-col', 'max-w-[80%]', 'p-3', 'rounded-2xl', 'shadow-md', 'transition-all', 'duration-300');
+                    if (isCurrentUser) {
+                        messageElement.classList.add('self-end', 'bg-purple-500', 'text-white');
+                    } else {
+                        messageElement.classList.add('self-start', 'bg-gray-200', 'text-gray-800');
+                    }
+
+                    const messageUsername = data.username || 'ผู้ใช้ไม่ระบุชื่อ';
+
+                    messageElement.innerHTML = `
+                        <span class="text-xs font-semibold ${isCurrentUser ? 'text-purple-200' : 'text-gray-500'}">${messageUsername}</span>
+                        <p class="mt-1">${data.text}</p>
+                    `;
+                    messagesEl.appendChild(messageElement);
+                });
+                // Auto-scroll to the bottom
+                messagesEl.scrollTop = messagesEl.scrollHeight;
+            }, (error) => {
+                console.error("Error getting messages:", error);
+            });
+        }
+        
+        // Handle form submission
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const messageText = messageInput.value.trim();
+            if (messageText === '') {
+                return;
+            }
+
+            if (auth.currentUser) {
+                try {
+                    await addDoc(collection(db, `artifacts/${appId}/public/data/chat_messages`), {
+                        text: messageText,
+                        userId: auth.currentUser.uid,
+                        username: currentUsername, // Use the stored username
+                        timestamp: serverTimestamp()
+                    });
+                    messageInput.value = ''; // Clear input field
+                } catch (e) {
+                    console.error("Error adding message: ", e);
+                }
+            } else {
+                console.error("User not authenticated.");
+            }
+        });
+        
+        // Start the app: check for existing username
+        authenticate().then(() => {
+            currentUsername = localStorage.getItem('username');
+            if (currentUsername) {
+                showChat();
+                listenForMessages();
+            } else {
+                usernameModal.classList.remove('hidden');
+            }
+        });
+    </script>
+</body>
+</html>
