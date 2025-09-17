@@ -1,218 +1,314 @@
 <!DOCTYPE html>
-<html lang="th">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>เว็บแชทออนไลน์</title>
+    <title>ห้องแชทออนไลน์</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, collection, query, addDoc, serverTimestamp, onSnapshot, where, deleteDoc, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Firebase globals, provided by the environment.
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let app;
+        let db;
+        let auth;
+        let userId;
+        let userName;
+        let userPresenceDoc;
+
+        const loginScreen = document.getElementById('login-screen');
+        const chatScreen = document.getElementById('chat-screen');
+        const usernameInput = document.getElementById('username-input');
+        const loginButton = document.getElementById('login-button');
+        const messageInput = document.getElementById('message-input');
+        const sendButton = document.getElementById('send-button');
+        const messagesContainer = document.getElementById('messages-container');
+        const onlineCountSpan = document.getElementById('online-count');
+        const currentUsernameSpan = document.getElementById('current-username');
+        const logoutButton = document.getElementById('logout-button');
+        const statusModal = document.getElementById('status-modal');
+        const statusMessage = document.getElementById('status-message');
+        const closeModalButton = document.getElementById('close-modal-button');
+
+        const MAX_USERS = 10;
+        const CHAT_COLLECTION = `artifacts/${appId}/public/data/chat_messages`;
+        const ONLINE_USERS_COLLECTION = `artifacts/${appId}/public/data/online_users`;
+        
+        // Initialize and authenticate Firebase
+        async function initializeFirebase() {
+            try {
+                if (!app) {
+                    app = initializeApp(firebaseConfig);
+                    db = getFirestore(app);
+                    auth = getAuth(app);
+                }
+
+                showStatusModal("กำลังเชื่อมต่อ...");
+                // Sign in with custom token if available, otherwise anonymously
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                // Listen for auth state changes
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        hideStatusModal();
+                        console.log("Firebase initialized and authenticated.");
+                    } else {
+                        console.log("User is signed out.");
+                        // Handle logout state
+                        if (chatScreen.classList.contains('flex')) {
+                             showLoginScreen();
+                        }
+                    }
+                });
+
+            } catch (error) {
+                console.error("Firebase initialization failed:", error);
+                showStatusModal("เกิดข้อผิดพลาดในการเชื่อมต่อ Firebase กรุณาลองใหม่อีกครั้ง");
+            }
+        }
+
+        // Show a modal with a message
+        function showStatusModal(message) {
+            statusMessage.textContent = message;
+            statusModal.classList.remove('hidden');
+        }
+
+        // Hide the modal
+        function hideStatusModal() {
+            statusModal.classList.add('hidden');
+        }
+
+        // Show login screen and hide chat screen
+        function showLoginScreen() {
+            loginScreen.classList.remove('hidden');
+            chatScreen.classList.add('hidden');
+            messagesContainer.innerHTML = '';
+            usernameInput.value = '';
+        }
+
+        // Show chat screen and hide login screen
+        function showChatScreen() {
+            loginScreen.classList.add('hidden');
+            chatScreen.classList.remove('hidden');
+        }
+
+        // Handle user login
+        loginButton.addEventListener('click', async () => {
+            const username = usernameInput.value.trim();
+            if (username === '') {
+                showStatusModal("กรุณาใส่ชื่อของคุณก่อนเข้าสู่ห้องแชท");
+                return;
+            }
+
+            try {
+                showStatusModal("กำลังตรวจสอบจำนวนผู้ใช้...");
+                // Query all online user documents to get the actual count
+                const onlineUsersRef = collection(db, ONLINE_USERS_COLLECTION);
+                const querySnapshot = await getDocs(onlineUsersRef);
+                const currentCount = querySnapshot.size;
+
+                if (currentCount >= MAX_USERS) {
+                    showStatusModal(`ห้องแชทเต็มแล้ว (ผู้ใช้: ${currentCount}/${MAX_USERS})`);
+                    return;
+                }
+
+                // Set user presence
+                userPresenceDoc = doc(db, ONLINE_USERS_COLLECTION, userId);
+                await setDoc(userPresenceDoc, {
+                    name: username,
+                    lastSeen: serverTimestamp(),
+                });
+                
+                userName = username;
+                currentUsernameSpan.textContent = userName;
+                showChatScreen();
+                hideStatusModal();
+
+            } catch (error) {
+                console.error("Login failed:", error);
+                showStatusModal("เกิดข้อผิดพลาดในการเข้าสู่ระบบ");
+            }
+        });
+
+        // Function to send a message to Firestore
+        async function sendMessage(senderId, senderName, text) {
+            try {
+                await addDoc(collection(db, CHAT_COLLECTION), {
+                    userId: senderId,
+                    userName: senderName,
+                    text: text,
+                    timestamp: serverTimestamp()
+                });
+            } catch (error) {
+                console.error("Error sending message:", error);
+                showStatusModal("เกิดข้อผิดพลาดในการส่งข้อความ");
+            }
+        }
+
+        // Handle sending a message
+        sendButton.addEventListener('click', async () => {
+            const messageText = messageInput.value.trim();
+            if (messageText === '') return;
+            await sendMessage(userId, userName, messageText);
+            messageInput.value = '';
+        });
+
+        // Handle user logout
+        logoutButton.addEventListener('click', async () => {
+            if (userPresenceDoc) {
+                await deleteDoc(userPresenceDoc); // Remove user presence
+            }
+            await signOut(auth); // Sign out from Firebase
+            showLoginScreen();
+            
+            // Re-authenticate anonymously to keep the app ready
+            await signInAnonymously(auth);
+        });
+
+        // Real-time listener for messages
+        let unsubscribeMessages;
+        let unsubscribeOnlineUsers;
+
+        function attachListeners() {
+            // Listen for messages
+            const messagesQuery = query(collection(db, CHAT_COLLECTION), where("timestamp", "!=", null));
+            unsubscribeMessages = onSnapshot(messagesQuery, (snapshot) => {
+                messagesContainer.innerHTML = '';
+                const messages = [];
+                snapshot.forEach(doc => {
+                    messages.push(doc.data());
+                });
+
+                // Sort messages by timestamp
+                messages.sort((a, b) => a.timestamp - b.timestamp);
+
+                messages.forEach(msg => {
+                    const isMyMessage = msg.userId === userId;
+
+                    const messageElement = document.createElement('div');
+                    messageElement.classList.add('flex', 'flex-col', 'max-w-xs', 'px-4', 'py-2', 'rounded-xl', 'my-1', 'shadow-md', 'text-sm');
+                    messageElement.classList.add(isMyMessage ? 'self-end' : 'self-start');
+                    
+                    if (isMyMessage) {
+                        messageElement.classList.add('bg-indigo-500', 'text-white');
+                    } else {
+                         messageElement.classList.add('bg-gray-200', 'text-gray-800');
+                    }
+
+                    const nameSpan = document.createElement('span');
+                    nameSpan.textContent = isMyMessage ? 'คุณ' : msg.userName;
+                    nameSpan.classList.add('font-bold', 'text-xs', 'mb-1');
+                    messageElement.appendChild(nameSpan);
+
+                    const textSpan = document.createElement('span');
+                    textSpan.textContent = msg.text;
+                    messageElement.appendChild(textSpan);
+
+                    const timeSpan = document.createElement('span');
+                    const date = new Date(msg.timestamp?.toDate());
+                    timeSpan.textContent = date.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+                    timeSpan.classList.add('text-right', 'mt-1', 'text-xs');
+                    if (isMyMessage) {
+                        timeSpan.classList.add('text-indigo-200');
+                    } else {
+                         timeSpan.classList.add('text-gray-500');
+                    }
+                    messageElement.appendChild(timeSpan);
+                    
+                    messagesContainer.appendChild(messageElement);
+                });
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            });
+
+            // Listen for online users count
+            const onlineUsersRef = collection(db, ONLINE_USERS_COLLECTION);
+            unsubscribeOnlineUsers = onSnapshot(onlineUsersRef, (snapshot) => {
+                onlineCountSpan.textContent = snapshot.docs.length;
+            });
+        }
+
+        // Close modal event listener
+        closeModalButton.addEventListener('click', () => {
+            hideStatusModal();
+        });
+
+        // Call init function on window load
+        window.onload = () => {
+            initializeFirebase();
+            attachListeners();
+        };
+
+        // There is no need for this as user presence is handled on login and logout events.
+        // window.addEventListener('beforeunload', async () => {
+        //     if (userPresenceDoc) {
+        //          await deleteDoc(userPresenceDoc);
+        //     }
+        // });
+    </script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #f1f5f9;
+            background-color: #f3f4f6;
         }
     </style>
 </head>
-<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+<body class="h-screen w-screen flex items-center justify-center">
 
-    <!-- Main Chat Container -->
-    <div id="main-container" class="bg-white rounded-xl shadow-2xl max-w-2xl w-full flex flex-col h-[80vh] hidden">
+    <!-- Main Container -->
+    <div class="relative w-full h-full sm:h-[80vh] sm:w-[500px] flex flex-col bg-white rounded-xl shadow-lg overflow-hidden">
         
-        <!-- Header -->
-        <div class="bg-purple-600 text-white p-4 rounded-t-xl shadow-lg">
-            <h1 class="text-xl font-bold">แชทสาธารณะ</h1>
-            <p id="app-info" class="text-sm mt-1 text-purple-200">
-                รหัสผู้ใช้: - | รหัสแอป: -
-            </p>
+        <!-- Login Screen -->
+        <div id="login-screen" class="flex flex-col items-center justify-center h-full p-6 transition-opacity duration-300 ease-in-out">
+            <h1 class="text-3xl font-bold text-gray-800 mb-4">เข้าสู่ห้องแชท</h1>
+            <p class="text-gray-600 text-center mb-6">กรุณาใส่ชื่อของคุณเพื่อเข้าห้องแชท</p>
+            <input id="username-input" type="text" placeholder="ชื่อผู้ใช้งานของคุณ" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 mb-4">
+            <button id="login-button" class="w-full bg-indigo-600 text-white font-semibold py-3 rounded-lg shadow-md hover:bg-indigo-700 transition duration-300">เข้าสู่ระบบ</button>
         </div>
 
-        <!-- Message Display Area -->
-        <div id="messages" class="flex-1 overflow-y-auto p-4 space-y-4">
-            <!-- Messages will be injected here -->
+        <!-- Chat Screen -->
+        <div id="chat-screen" class="hidden flex-col h-full transition-opacity duration-300 ease-in-out">
+            <!-- Chat Header -->
+            <div class="flex items-center justify-between p-4 bg-indigo-600 text-white rounded-t-xl shadow-md">
+                <div class="flex flex-col">
+                    <span class="text-xl font-bold">ห้องแชทออนไลน์</span>
+                    <span id="current-username" class="text-sm"></span>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <span class="text-sm">ออนไลน์: <span id="online-count">0</span>/10</span>
+                    <button id="logout-button" class="px-3 py-1 bg-white text-indigo-600 font-semibold rounded-lg shadow-md hover:bg-gray-100 transition duration-300">ออก</button>
+                </div>
+            </div>
+
+            <!-- Messages Container -->
+            <div id="messages-container" class="flex-1 overflow-y-auto p-4 flex flex-col space-y-2">
+                <!-- Messages will be injected here by JavaScript -->
+            </div>
+
+            <!-- Message Input Area -->
+            <div class="flex items-center p-4 border-t border-gray-200">
+                <input id="message-input" type="text" placeholder="พิมพ์ข้อความ..." class="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 mr-2">
+                <button id="send-button" class="bg-indigo-600 text-white font-semibold px-4 py-3 rounded-lg shadow-md hover:bg-indigo-700 transition duration-300 w-24">ส่ง</button>
+            </div>
         </div>
 
-        <!-- Message Input Form -->
-        <form id="chat-form" class="p-4 border-t border-gray-200 flex space-x-2">
-            <input type="text" id="message-input" placeholder="พิมพ์ข้อความที่นี่..."
-                   class="flex-1 p-3 rounded-full bg-gray-100 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-colors duration-200">
-            <button type="submit"
-                    class="bg-purple-600 text-white font-semibold py-2 px-6 rounded-full shadow-lg hover:bg-purple-700 transition duration-300 transform hover:scale-105">
-                ส่ง
-            </button>
-        </form>
+        <!-- Status/Alert Modal -->
+        <div id="status-modal" class="hidden absolute top-0 left-0 w-full h-full bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-white p-6 rounded-lg shadow-xl text-center max-w-sm mx-4">
+                <p id="status-message" class="text-gray-800 text-lg font-semibold mb-4"></p>
+                <button id="close-modal-button" class="bg-indigo-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-indigo-700 transition duration-300">ตกลง</button>
+            </div>
+        </div>
     </div>
-
-    <!-- Username Input Modal -->
-    <div id="username-modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50">
-        <div class="bg-white p-8 rounded-xl shadow-2xl text-center">
-            <h2 class="text-2xl font-bold mb-4 text-gray-800">ใส่ชื่อของคุณ</h2>
-            <form id="username-form" class="flex flex-col space-y-4">
-                <input type="text" id="username-input" placeholder="ชื่อผู้ใช้" required
-                       class="p-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-colors duration-200">
-                <button type="submit"
-                        class="bg-purple-600 text-white font-semibold py-3 rounded-lg shadow-lg hover:bg-purple-700 transition duration-300 transform hover:scale-105">
-                    เข้าสู่แชท
-                </button>
-            </form>
-        </div>
-    </div>
-
-    <!-- Firebase SDKs -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, query, onSnapshot, serverTimestamp, setDoc, doc, orderBy, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // Enable debug logging for Firestore
-        setLogLevel('debug');
-
-        // Firebase Configuration and App ID
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-        
-        // UI Elements
-        const messagesEl = document.getElementById('messages');
-        const form = document.getElementById('chat-form');
-        const messageInput = document.getElementById('message-input');
-        const appInfoEl = document.getElementById('app-info');
-        const mainContainer = document.getElementById('main-container');
-        const usernameModal = document.getElementById('username-modal');
-        const usernameForm = document.getElementById('username-form');
-        const usernameInput = document.getElementById('username-input');
-
-        let currentUsername = null;
-        let db;
-        let auth;
-        
-        async function saveUsername(userId, username) {
-            if (!db) {
-                console.error("Firestore is not initialized.");
-                return;
-            }
-            try {
-                await setDoc(doc(db, `artifacts/${appId}/public/data/users/${userId}`), {
-                    username: username,
-                    last_active: serverTimestamp()
-                });
-                currentUsername = username;
-            } catch (error) {
-                console.error("Error saving username:", error);
-            }
-        }
-
-        async function getUsername(userId) {
-            if (!db) return null;
-            try {
-                const userDocRef = doc(db, `artifacts/${appId}/public/data/users/${userId}`);
-                const userDocSnap = await getDoc(userDocRef);
-                return userDocSnap.exists() ? userDocSnap.data().username : null;
-            } catch (error) {
-                console.error("Error getting username:", error);
-                return null;
-            }
-        }
-
-        function showChat() {
-            usernameModal.classList.add('hidden');
-            mainContainer.classList.remove('hidden');
-        }
-
-        function listenForMessages() {
-            if (!db || !auth.currentUser) return;
-            const q = query(
-                collection(db, `artifacts/${appId}/public/data/chat_messages`),
-                orderBy('timestamp')
-            );
-            onSnapshot(q, (snapshot) => {
-                messagesEl.innerHTML = '';
-                snapshot.forEach((doc) => {
-                    const data = doc.data();
-                    let messageUsername = data.username || 'ผู้ใช้ไม่ระบุชื่อ';
-                    const messageElement = document.createElement('div');
-                    const isCurrentUser = data.userId === auth.currentUser.uid;
-                    messageElement.classList.add('flex', 'flex-col', 'max-w-[80%]', 'p-3', 'rounded-2xl', 'shadow-md', 'transition-all', 'duration-300');
-                    if (isCurrentUser) {
-                        messageElement.classList.add('self-end', 'bg-purple-500', 'text-white');
-                    } else {
-                        messageElement.classList.add('self-start', 'bg-gray-200', 'text-gray-800');
-                    }
-                    messageElement.innerHTML = `
-                        <span class="text-xs font-semibold ${isCurrentUser ? 'text-purple-200' : 'text-gray-500'}">${messageUsername}</span>
-                        <p class="mt-1">${data.text}</p>
-                    `;
-                    messagesEl.appendChild(messageElement);
-                });
-                messagesEl.scrollTop = messagesEl.scrollHeight;
-            }, (error) => {
-                console.error("Error getting messages:", error);
-            });
-        }
-        
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const messageText = messageInput.value.trim();
-            if (messageText === '' || !auth.currentUser) return;
-            
-            try {
-                await addDoc(collection(db, `artifacts/${appId}/public/data/chat_messages`), {
-                    text: messageText,
-                    userId: auth.currentUser.uid,
-                    username: currentUsername,
-                    timestamp: serverTimestamp()
-                });
-                messageInput.value = '';
-            } catch (e) {
-                console.error("Error adding message: ", e);
-            }
-        });
-
-        usernameForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const username = usernameInput.value.trim();
-            if (username && auth.currentUser) {
-                await saveUsername(auth.currentUser.uid, username);
-                showChat();
-                listenForMessages();
-            }
-        });
-
-        // Main app flow
-        window.onload = () => {
-            try {
-                const appInstance = initializeApp(firebaseConfig);
-                db = getFirestore(appInstance);
-                auth = getAuth(appInstance);
-                
-                onAuthStateChanged(auth, async (user) => {
-                    if (user) {
-                        // User is authenticated, proceed to check for username
-                        appInfoEl.textContent = `รหัสผู้ใช้: ${user.uid} | รหัสแอป: ${appId}`;
-                        const savedUsername = await getUsername(user.uid);
-                        if (savedUsername) {
-                            currentUsername = savedUsername;
-                            showChat();
-                            listenForMessages();
-                        } else {
-                            usernameModal.classList.remove('hidden');
-                        }
-                    } else {
-                        // User is not authenticated, sign them in
-                        try {
-                            if (typeof __initial_auth_token !== 'undefined') {
-                                await signInWithCustomToken(auth, __initial_auth_token);
-                            } else {
-                                await signInAnonymously(auth);
-                            }
-                        } catch (error) {
-                            console.error("Authentication failed:", error);
-                        }
-                    }
-                });
-            } catch (error) {
-                console.error("Firebase initialization failed:", error);
-            }
-        };
-    </script>
 </body>
 </html>
