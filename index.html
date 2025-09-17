@@ -115,10 +115,8 @@
         // Handle username form submission
         usernameForm.addEventListener('submit', (e) => {
             e.preventDefault();
-            const username = usernameInput.value.trim();
-            if (username) {
-                localStorage.setItem('username', username);
-                currentUsername = username;
+            currentUsername = usernameInput.value.trim();
+            if (currentUsername) {
                 showChat();
                 listenForMessages(); // Start listening for messages after username is set
             }
@@ -187,14 +185,10 @@
         
         // Start the app: check for existing username
         authenticate().then(() => {
-            currentUsername = localStorage.getItem('username');
-            if (currentUsername) {
-                showChat();
-                listenForMessages();
-            } else {
-                usernameModal.classList.remove('hidden');
-            }
+            // No longer checking localStorage. Show username input and start.
+            usernameModal.classList.remove('hidden');
         });
     </script>
 </body>
 </html>
+
