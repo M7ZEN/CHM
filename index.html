@@ -61,8 +61,8 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        import { getDoc, doc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, query, onSnapshot, serverTimestamp, setDoc, doc, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Firebase Configuration and App ID
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -125,7 +125,7 @@
 
             onSnapshot(q, async (snapshot) => {
                 messagesEl.innerHTML = ''; // Clear old messages
-                for (const doc of snapshot.docs) {
+                snapshot.forEach((doc) => {
                     const data = doc.data();
                     let messageUsername = data.username || 'ผู้ใช้ไม่ระบุชื่อ';
                     
@@ -144,7 +144,7 @@
                         <p class="mt-1">${data.text}</p>
                     `;
                     messagesEl.appendChild(messageElement);
-                }
+                });
                 // Auto-scroll to the bottom
                 messagesEl.scrollTop = messagesEl.scrollHeight;
             }, (error) => {
@@ -152,7 +152,7 @@
             });
         }
         
-        // Handle form submission
+        // Handle message form submission
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             const messageText = messageInput.value.trim();
@@ -181,44 +181,20 @@
         usernameForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             const username = usernameInput.value.trim();
-            if (username) {
-                // Check if user is already authenticated
-                if (auth.currentUser) {
-                    try {
-                        await setDoc(doc(db, `artifacts/${appId}/public/data/users/${auth.currentUser.uid}`), {
-                            username: username,
-                            last_active: serverTimestamp()
-                        });
-                        currentUsername = username;
-                        showChat();
-                        listenForMessages();
-                    } catch (error) {
-                        console.error("Error saving username:", error);
-                    }
-                } else {
-                    // Re-run authentication if user is not authenticated
-                    authenticate().then(() => {
-                        onAuthStateChanged(auth, async (user) => {
-                            if (user) {
-                                try {
-                                    await setDoc(doc(db, `artifacts/${appId}/public/data/users/${user.uid}`), {
-                                        username: username,
-                                        last_active: serverTimestamp()
-                                    });
-                                    currentUsername = username;
-                                    showChat();
-                                    listenForMessages();
-                                } catch (error) {
-                                    console.error("Error saving username:", error);
-                                }
-                            } else {
-                                console.error("Authentication failed after username submission.");
-                            }
-                        });
-                    }).catch(error => {
-                        console.error("Authentication failed:", error);
+            if (username && auth.currentUser) {
+                try {
+                    await setDoc(doc(db, `artifacts/${appId}/public/data/users/${auth.currentUser.uid}`), {
+                        username: username,
+                        last_active: serverTimestamp()
                     });
+                    currentUsername = username;
+                    showChat();
+                    listenForMessages();
+                } catch (error) {
+                    console.error("Error saving username:", error);
                 }
+            } else if (!auth.currentUser) {
+                console.error("User not authenticated. Cannot save username.");
             }
         });
         
@@ -239,10 +215,11 @@
                             showChat();
                             listenForMessages();
                         } else {
+                            // If a user is logged in but has no username, show the modal
                             usernameModal.classList.remove('hidden');
                         }
                     } else {
-                        appInfoEl.textContent = 'กำลังเข้าสู่ระบบ...';
+                        // User is not logged in, initiate anonymous auth
                         authenticate();
                     }
                 });
@@ -250,7 +227,6 @@
                 console.error("Firebase initialization failed:", error);
             }
         };
-
     </script>
 </body>
 </html>
