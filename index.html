@@ -81,6 +81,24 @@
         let currentUsername = null;
         let db;
         let auth;
+
+        // Function to handle the full application flow
+        function setupAppFlow(user) {
+            appInfoEl.textContent = `รหัสผู้ใช้: ${user.uid} | รหัสแอป: ${appId}`;
+            
+            getUsername(user.uid).then(savedUsername => {
+                if (savedUsername) {
+                    currentUsername = savedUsername;
+                    showChat();
+                    listenForMessages();
+                } else {
+                    // Show the username modal if the user is logged in but has no username
+                    usernameModal.classList.remove('hidden');
+                }
+            }).catch(error => {
+                console.error("Error setting up app flow:", error);
+            });
+        }
         
         async function authenticate() {
             if (typeof __initial_auth_token !== 'undefined') {
@@ -123,7 +141,7 @@
                 orderBy('timestamp')
             );
 
-            onSnapshot(q, async (snapshot) => {
+            onSnapshot(q, (snapshot) => {
                 messagesEl.innerHTML = ''; // Clear old messages
                 snapshot.forEach((doc) => {
                     const data = doc.data();
@@ -177,26 +195,32 @@
             }
         });
 
-        // Handle username form submission
-        usernameForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const username = usernameInput.value.trim();
-            if (username && auth.currentUser) {
-                try {
-                    await setDoc(doc(db, `artifacts/${appId}/public/data/users/${auth.currentUser.uid}`), {
-                        username: username,
-                        last_active: serverTimestamp()
-                    });
-                    currentUsername = username;
-                    showChat();
-                    listenForMessages();
-                } catch (error) {
-                    console.error("Error saving username:", error);
-                }
-            } else if (!auth.currentUser) {
-                console.error("User not authenticated. Cannot save username.");
+        // Handle username form submission - attached only after authentication
+        let usernameFormListener = null;
+
+        function attachUsernameFormListener(user) {
+            if (usernameFormListener) {
+                usernameForm.removeEventListener('submit', usernameFormListener);
             }
-        });
+            usernameFormListener = async (e) => {
+                e.preventDefault();
+                const username = usernameInput.value.trim();
+                if (username && user) {
+                    try {
+                        await setDoc(doc(db, `artifacts/${appId}/public/data/users/${user.uid}`), {
+                            username: username,
+                            last_active: serverTimestamp()
+                        });
+                        currentUsername = username;
+                        showChat();
+                        listenForMessages();
+                    } catch (error) {
+                        console.error("Error saving username:", error);
+                    }
+                }
+            };
+            usernameForm.addEventListener('submit', usernameFormListener);
+        }
         
         // Start the app flow after authentication state is determined
         window.onload = () => {
@@ -205,22 +229,17 @@
                 db = getFirestore(appInstance);
                 auth = getAuth(appInstance);
                 
-                onAuthStateChanged(auth, async (user) => {
+                onAuthStateChanged(auth, (user) => {
                     if (user) {
-                        appInfoEl.textContent = `รหัสผู้ใช้: ${user.uid} | รหัสแอป: ${appId}`;
-                        
-                        const savedUsername = await getUsername(user.uid);
-                        if (savedUsername) {
-                            currentUsername = savedUsername;
-                            showChat();
-                            listenForMessages();
-                        } else {
-                            // If a user is logged in but has no username, show the modal
-                            usernameModal.classList.remove('hidden');
-                        }
+                        setupAppFlow(user);
+                        attachUsernameFormListener(user);
                     } else {
                         // User is not logged in, initiate anonymous auth
-                        authenticate();
+                        authenticate().then(() => {
+                           // The onAuthStateChanged listener will fire again with the user object
+                        }).catch(error => {
+                            console.error("Authentication failed:", error);
+                        });
                     }
                 });
             } catch (error) {
