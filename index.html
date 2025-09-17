@@ -62,6 +62,7 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getDoc, doc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Firebase Configuration and App ID
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -78,61 +79,57 @@
         const usernameInput = document.getElementById('username-input');
 
         let currentUsername = null;
-
-        // Initialize Firebase
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
-        const auth = getAuth(app);
+        let db;
+        let auth;
         
-        // Log authentication state for debugging
-        auth.onAuthStateChanged(user => {
-            if (user) {
-                appInfoEl.textContent = `รหัสผู้ใช้: ${user.uid} | รหัสแอป: ${appId}`;
-            } else {
-                appInfoEl.textContent = 'กำลังเข้าสู่ระบบ...';
-            }
-        });
-
-        // Sign in anonymously
         async function authenticate() {
-            try {
-                if (typeof __initial_auth_token !== 'undefined') {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
-            } catch (error) {
-                console.error("Authentication failed: ", error);
+            if (typeof __initial_auth_token !== 'undefined') {
+                await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+                await signInAnonymously(auth);
             }
         }
 
-        // Show chat when username is set
         function showChat() {
             usernameModal.classList.add('hidden');
             mainContainer.classList.remove('hidden');
         }
 
-        // Handle username form submission
-        usernameForm.addEventListener('submit', (e) => {
-            e.preventDefault();
-            currentUsername = usernameInput.value.trim();
-            if (currentUsername) {
-                showChat();
-                listenForMessages(); // Start listening for messages after username is set
+        async function getUsername(userId) {
+            if (!db) {
+                console.error("Firestore is not initialized.");
+                return null;
             }
-        });
+            try {
+                const userDocRef = doc(db, `artifacts/${appId}/public/data/users/${userId}`);
+                const userDocSnap = await getDoc(userDocRef);
+                if (userDocSnap.exists()) {
+                    return userDocSnap.data().username;
+                }
+            } catch (error) {
+                console.error("Error getting username:", error);
+            }
+            return null;
+        }
 
         // Listen for messages in real-time
         function listenForMessages() {
+            if (!db) {
+                console.error("Firestore is not initialized.");
+                return;
+            }
             const q = query(
                 collection(db, `artifacts/${appId}/public/data/chat_messages`),
                 orderBy('timestamp')
             );
 
-            onSnapshot(q, (snapshot) => {
+            onSnapshot(q, async (snapshot) => {
                 messagesEl.innerHTML = ''; // Clear old messages
-                snapshot.forEach((doc) => {
+                const messagesWithUsernames = [];
+                for (const doc of snapshot.docs) {
                     const data = doc.data();
+                    let messageUsername = data.username || 'ผู้ใช้ไม่ระบุชื่อ';
+                    
                     const messageElement = document.createElement('div');
                     const isCurrentUser = data.userId === auth.currentUser.uid;
                     
@@ -142,15 +139,13 @@
                     } else {
                         messageElement.classList.add('self-start', 'bg-gray-200', 'text-gray-800');
                     }
-
-                    const messageUsername = data.username || 'ผู้ใช้ไม่ระบุชื่อ';
-
+                    
                     messageElement.innerHTML = `
                         <span class="text-xs font-semibold ${isCurrentUser ? 'text-purple-200' : 'text-gray-500'}">${messageUsername}</span>
                         <p class="mt-1">${data.text}</p>
                     `;
                     messagesEl.appendChild(messageElement);
-                });
+                }
                 // Auto-scroll to the bottom
                 messagesEl.scrollTop = messagesEl.scrollHeight;
             }, (error) => {
@@ -182,13 +177,56 @@
                 console.error("User not authenticated.");
             }
         });
-        
-        // Start the app: check for existing username
-        authenticate().then(() => {
-            // No longer checking localStorage. Show username input and start.
-            usernameModal.classList.remove('hidden');
+
+        // Handle username form submission
+        usernameForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = usernameInput.value.trim();
+            if (username) {
+                currentUsername = username;
+                showChat();
+                // Persist username to Firestore for other users to see
+                try {
+                    await setDoc(doc(db, `artifacts/${appId}/public/data/users/${auth.currentUser.uid}`), {
+                        username: username,
+                        last_active: serverTimestamp()
+                    });
+                } catch (error) {
+                    console.error("Error saving username:", error);
+                }
+                listenForMessages();
+            }
         });
+        
+        // Start the app flow after authentication state is determined
+        window.onload = () => {
+            try {
+                const appInstance = initializeApp(firebaseConfig);
+                db = getFirestore(appInstance);
+                auth = getAuth(appInstance);
+                
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        appInfoEl.textContent = `รหัสผู้ใช้: ${user.uid} | รหัสแอป: ${appId}`;
+                        
+                        const savedUsername = await getUsername(user.uid);
+                        if (savedUsername) {
+                            currentUsername = savedUsername;
+                            showChat();
+                            listenForMessages();
+                        } else {
+                            usernameModal.classList.remove('hidden');
+                        }
+                    } else {
+                        appInfoEl.textContent = 'กำลังเข้าสู่ระบบ...';
+                        authenticate();
+                    }
+                });
+            } catch (error) {
+                console.error("Firebase initialization failed:", error);
+            }
+        };
+
     </script>
 </body>
 </html>
-
