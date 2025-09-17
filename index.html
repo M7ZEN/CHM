@@ -80,8 +80,7 @@
         let currentUsername = null;
         let db;
         let auth;
-        let isAuthReady = false;
-
+        
         async function saveUsername(userId, username) {
             if (!db) {
                 console.error("Firestore is not initialized.");
@@ -93,7 +92,6 @@
                     last_active: serverTimestamp()
                 });
                 currentUsername = username;
-                console.log("Username saved successfully.");
             } catch (error) {
                 console.error("Error saving username:", error);
             }
@@ -183,10 +181,8 @@
                 auth = getAuth(appInstance);
                 
                 onAuthStateChanged(auth, async (user) => {
-                    if (isAuthReady) return;
-                    isAuthReady = true;
-
                     if (user) {
+                        // User is authenticated, proceed to check for username
                         appInfoEl.textContent = `รหัสผู้ใช้: ${user.uid} | รหัสแอป: ${appId}`;
                         const savedUsername = await getUsername(user.uid);
                         if (savedUsername) {
@@ -197,6 +193,7 @@
                             usernameModal.classList.remove('hidden');
                         }
                     } else {
+                        // User is not authenticated, sign them in
                         try {
                             if (typeof __initial_auth_token !== 'undefined') {
                                 await signInWithCustomToken(auth, __initial_auth_token);
@@ -212,7 +209,6 @@
                 console.error("Firebase initialization failed:", error);
             }
         };
-
     </script>
 </body>
 </html>
